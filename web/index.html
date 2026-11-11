@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lastlight vault status</title>
+<style>
+  :root { color-scheme: light dark; --ok:#1a7f37; --warn:#b26b00; --bad:#c62828; }
+  body { font: 15px/1.5 system-ui, sans-serif; max-width: 760px; margin: 2rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.4rem; margin-bottom: .2rem; }
+  .sub { opacity: .7; margin-top: 0; }
+  form { display: flex; gap: .5rem; margin: 1rem 0; }
+  input { flex: 1; font: inherit; padding: .4rem; }
+  button { font: inherit; padding: .4rem .9rem; cursor: pointer; }
+  table { border-collapse: collapse; width: 100%; margin: .5rem 0 1rem; }
+  td { padding: .25rem .5rem; border-bottom: 1px solid #8884; vertical-align: top; }
+  td:first-child { opacity: .75; width: 34%; }
+  code { font-size: .85em; word-break: break-all; }
+  .big { font-size: 2rem; font-weight: 600; }
+  .ok { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); }
+  #log li { font-size: .9em; }
+  #err { color: var(--bad); white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<h1>Lastlight</h1>
+<p class="sub">Dead-man's-switch vault on Sepolia, watched by a Reactive Network cron contract on Lasna.</p>
+
+<form id="f"><input id="addr" placeholder="Vault address 0x…" spellcheck="false"><button>Load</button></form>
+<div id="err"></div>
+
+<div id="view" hidden>
+  <div class="big" id="countdown">…</div>
+  <div id="state"></div>
+  <table id="info"></table>
+  <h3>Heirs</h3>
+  <table id="heirs"></table>
+  <p><button id="checkin">Check in (owner wallet)</button> <span id="tx"></span></p>
+  <h3>Recent events</h3>
+  <ul id="log"></ul>
+</div>
+
+<script type="module">
+import { ethers } from "https://cdn.jsdelivr.net/npm/ethers@6.13.4/dist/ethers.min.js";
+
+const RPC = new URLSearchParams(location.search).get("rpc") || "https://ethereum-sepolia-rpc.publicnode.com";
+const EXPLORER = "https://sepolia.etherscan.io";
+const ABI = [
+  "function owner() view returns (address)",
+  "function heartbeat() view returns (uint64)",
+  "function warnLead() view returns (uint64)",
+  "function lastCheckIn() view returns (uint64)",
+  "function released() view returns (bool)",
+  "function deadline() view returns (uint256)",
+  "function plan() view returns (address[], uint16[], address[])",
+  "function checkIn()",
+  "event CheckIn(uint256 deadline, uint256 warnAt)",
+  "event Warned(uint256 deadline)",
+  "event ReleaseTooEarly(uint256 deadline, uint256 nowTs)",
+  "event Released(uint256 ethTotal)",
+  "event HeirPaid(address indexed heir, address indexed token, uint256 amount)",
+  "event HeirPushFailed(address indexed heir, uint256 amount)",
+  "event Deposited(address indexed from, uint256 amount)",
+];
+const provider = new ethers.JsonRpcProvider(RPC);
+const $ = (id) => document.getElementById(id);
+let vault, timer, deadlineTs = 0, warnLead = 0, released = false;
+
+const short = (a) => `<a href="${EXPLORER}/address/${a}" target="_blank"><code>${a}</code></a>`;
+const when = (t) => new Date(Number(t) * 1000).toLocaleString();
+function dur(s) {
+  s = Math.max(0, Math.floor(s));
+  const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+  return (d ? d + "d " : "") + (d || h ? h + "h " : "") + m + "m " + (s % 60) + "s";
+}
+
+function tick() {
+  const left = deadlineTs - Date.now() / 1000;
+  const cd = $("countdown"), st = $("state");
+  if (released) { cd.textContent = "Released"; cd.className = "big bad"; st.textContent = "Assets were sent to the heirs."; return; }
+  cd.textContent = left > 0 ? dur(left) : "Deadline passed";
+  cd.className = "big " + (left <= 0 ? "bad" : left <= warnLead ? "warn" : "ok");
+  st.textContent = left <= 0 ? "Waiting for the Reactive cron to fire release()."
+    : left <= warnLead ? "Inside the warning window: check in or the vault releases."
+    : "Owner is alive. Time left before release:";
+}
+
+async function load(addr) {
+  $("err").textContent = "";
+  try {
+    if (!ethers.isAddress(addr)) throw new Error("Not an address");
+    vault = new ethers.Contract(addr, ABI, provider);
+    const [owner, hb, wl, last, rel, dl, plan, bal] = await Promise.all([
+      vault.owner(), vault.heartbeat(), vault.warnLead(), vault.lastCheckIn(), vault.released(),
+      vault.deadline(), vault.plan(), provider.getBalance(addr)]);
+    deadlineTs = Number(dl); warnLead = Number(wl); released = rel;
+    $("info").innerHTML = [
+      ["Vault", short(addr)], ["Owner", short(owner)],
+      ["Balance", ethers.formatEther(bal) + " ETH"],
+      ["Heartbeat", dur(Number(hb))], ["Warn lead", dur(warnLead)],
+      ["Last check-in", when(last)], ["Deadline", when(dl)],
+      ["Tokens covered", plan[2].length ? plan[2].map(short).join("<br>") : "ETH only"],
+    ].map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join("");
+    $("heirs").innerHTML = plan[0].map((h, i) =>
+      `<tr><td>${(Number(plan[1][i]) / 100).toFixed(2)} %</td><td>${short(h)}</td></tr>`).join("");
+    $("view").hidden = false;
+    history.replaceState(null, "", "?vault=" + addr + (RPC.includes("publicnode") ? "" : "&rpc=" + encodeURIComponent(RPC)));
+    clearInterval(timer); tick(); timer = setInterval(tick, 1000);
+    loadLog(addr);
+  } catch (e) { $("err").textContent = "Could not load vault: " + (e.shortMessage || e.message); }
+}
+
+async function loadLog(addr) {
+  const head = await provider.getBlockNumber();
+  const from = Math.max(0, head - 49_000); // ~7 days on Sepolia; public RPCs cap the range
+  const logs = await provider.getLogs({ address: addr, fromBlock: from, toBlock: head });
+  const items = logs.reverse().slice(0, 30).map((l) => {
+    let p; try { p = vault.interface.parseLog(l); } catch { return null; }
+    const args = p.fragment.inputs.map((inp, i) => {
+      const v = p.args[i];
+      return inp.name + "=" + (inp.type === "address" ? v.slice(0, 10) + "…"
+        : /deadline|warnAt|nowTs/.test(inp.name) ? when(v)
+        : /amount|ethTotal/.test(inp.name) ? ethers.formatEther(v) : v);
+    }).join(", ");
+    return `<li><b>${p.name}</b> ${args} · <a href="${EXPLORER}/tx/${l.transactionHash}" target="_blank">tx</a> (block ${l.blockNumber})</li>`;
+  }).filter(Boolean);
+  $("log").innerHTML = items.join("") || "<li>No events in the last ~7 days.</li>";
+}
+
+$("f").onsubmit = (e) => { e.preventDefault(); load($("addr").value.trim()); };
+$("checkin").onclick = async () => {
+  try {
+    if (!window.ethereum) throw new Error("No browser wallet found");
+    const bp = new ethers.BrowserProvider(window.ethereum);
+    await bp.send("wallet_switchEthereumChain", [{ chainId: "0xaa36a7" }]);
+    const signer = await bp.getSigner();
+    const tx = await vault.connect(signer).checkIn();
+    $("tx").innerHTML = `sent <a href="${EXPLORER}/tx/${tx.hash}" target="_blank">${tx.hash.slice(0, 12)}…</a>`;
+    await tx.wait(); load(await vault.getAddress());
+  } catch (e) { $("tx").textContent = e.shortMessage || e.message; }
+};
+
+const q = new URLSearchParams(location.search).get("vault");
+if (q) { $("addr").value = q; load(q); }
+</script>
+</body>
+</html>
