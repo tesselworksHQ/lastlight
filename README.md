@@ -68,6 +68,12 @@ FACTORY=0x.. HEIR=0x.. forge script script/Deploy.s.sol:DemoVault --rpc-url $SEP
 The demo vault has a 30-minute heartbeat with a warning 15 minutes before the deadline, so the whole loop can be
 watched in under an hour.
 
+## Status page
+
+`web/index.html` is a single static page with no build step (ethers v6 from a CDN, public Sepolia RPC). Open it
+with `?vault=0x…` to see the countdown, heirs and shares, balance and the vault's recent events (CheckIn, Warned,
+Released, HeirPaid). The owner can check in from any injected browser wallet. Add `&rpc=<url>` to use another RPC.
+
 ## Live run
 
 *Pending: addresses and tx hashes for create → CheckIn → warn → release → Released go here.*
