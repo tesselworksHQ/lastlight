@@ -6,6 +6,9 @@ notices on its own and releases the vault to your heirs.
 
 Built for the Reactive Omni Buildathon, track **Set It and Forget It**.
 
+**Demo video (2 min, captioned):** [demo.mp4](https://github.com/tesselworksHQ/lastlight/raw/main/demo.mp4)
+(recorded by `video/record.mjs`).
+
 ## How it works
 
 ```
