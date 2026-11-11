@@ -76,7 +76,22 @@ Released, HeirPaid). The owner can check in from any injected browser wallet. Ad
 
 ## Live run
 
-*Pending: addresses and tx hashes for create → CheckIn → warn → release → Released go here.*
+Deployed 2026-11-11. The demo vault had a 30-minute heartbeat with the warning 15 minutes before the deadline, 0.02 ETH, and one heir.
+After it was created, nothing off-chain touched it.
+
+| Contract | Chain | Address |
+|---|---|---|
+| LastlightReactive | Reactive Lasna | `0x50491aeb35b82531f3B93dE363c0568FEdC212c2` |
+| LastlightFactory | Ethereum Sepolia | `0xbFD7AadE362274DbD55Cd4Ab5745f36fB5F4281b` |
+| Demo vault | Ethereum Sepolia | `0x4a988f214Dc696b1933C3404Bb0B5Ff2eb703e79` |
+
+| Step | Time (UTC) | Sepolia tx |
+|---|---|---|
+| `create` → `VaultCreated` + `CheckIn` | 14:20 | `0x025e78f212e418e9d7356bbbda0f3bbd5bf62f019af2e24e2e1317c604bb55a3` |
+| Cron tick → `warn` callback → `Warned` (49 s after warnAt) | 14:34 | `0x36cf239be5aef030eb1cd7de0c24123b2aa75d9fd28848830a6da552e4958de6` |
+| Cron tick → `release` callback → `HeirPaid` + `Released` (112 s after deadline) | 14:50 | `0xfb0d084e1ae3ddbec997364f33cba0b17c3359a77debbcecf90d71297b052461` |
+
+Both callbacks were delivered by the Sepolia callback proxy `0xAa14d9Cd0f788Ca23d11805986C1d8bd035D23b4`.
 
 ## Limits
 
